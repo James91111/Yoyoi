@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
       - name: Jalankan uji media
         run: |
           bash bench/media_bench.sh > /tmp/out.txt 2>&1 || true
