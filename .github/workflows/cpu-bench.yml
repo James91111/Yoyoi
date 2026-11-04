@@ -11,21 +11,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Info mesin runner
+      - name: Jalankan semua benchmark
         run: |
+          exec > >(tee /tmp/out.txt) 2>&1
           echo "== nproc =="; nproc
-          echo "== lscpu =="; lscpu | grep -Ei 'model name|^cpu\(s\)|thread|core\(s\)|mhz|bogo' || true
+          echo "== lscpu =="; lscpu | grep -Ei 'model name|^cpu\(s\)|thread|core\(s\)|mhz|bogo|hypervisor' || true
           echo "== memori =="; free -m
           echo "== python =="; python3 -VV
+          for n in 1 2 4; do
+            echo "===== BENCH ${n} CORE ====="
+            python3 bench/cpu_bench.py $n
+          done
+          echo "===== AES-256-GCM (hardware crypto) ====="
+          openssl speed -elapsed -evp aes-256-gcm 2>/dev/null | tail -3 || true
 
-      - name: Benchmark 1 core
-        run: python3 bench/cpu_bench.py 1
-
-      - name: Benchmark 2 core
-        run: python3 bench/cpu_bench.py 2
-
-      - name: Benchmark 4 core
-        run: python3 bench/cpu_bench.py 4
-
-      - name: Benchmark AES (hardware crypto)
-        run: openssl speed -elapsed -evp aes-256-gcm 2>/dev/null | tail -3 || true
+      - name: Publikasikan hasil sebagai komentar commit
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -Rs '{body: .}' /tmp/out.txt > /tmp/payload.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/comments" \
+            -d @/tmp/payload.json | head -c 300
