@@ -1,0 +1,31 @@
+name: CPU bench
+
+on:
+  push:
+    branches: [arena/f3c901c7-yoyoi]
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Info mesin runner
+        run: |
+          echo "== nproc =="; nproc
+          echo "== lscpu =="; lscpu | grep -Ei 'model name|^cpu\(s\)|thread|core\(s\)|mhz|bogo' || true
+          echo "== memori =="; free -m
+          echo "== python =="; python3 -VV
+
+      - name: Benchmark 1 core
+        run: python3 bench/cpu_bench.py 1
+
+      - name: Benchmark 2 core
+        run: python3 bench/cpu_bench.py 2
+
+      - name: Benchmark 4 core
+        run: python3 bench/cpu_bench.py 4
+
+      - name: Benchmark AES (hardware crypto)
+        run: openssl speed -elapsed -evp aes-256-gcm 2>/dev/null | tail -3 || true
