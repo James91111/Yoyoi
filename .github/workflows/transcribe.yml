@@ -1,0 +1,120 @@
+name: Transkrip audio (faster-whisper, sharded)
+
+on:
+  workflow_dispatch:
+    inputs:
+      lang:
+        description: 'Bahasa: en / id / auto'
+        default: 'auto'
+      shards:
+        description: 'Jumlah job paralel (1-20)'
+        default: '4'
+      model:
+        description: 'Model: small / base / medium'
+        default: 'small'
+      cpu_threads:
+        description: 'Thread per model'
+        default: '2'
+      workers:
+        description: 'Item paralel per job'
+        default: '1'
+  push:
+    branches: [arena/f3c901c7-yoyoi]
+    paths:
+      - 'whisper/input/**'
+
+env:
+  LANG_CODE: ${{ github.event.inputs.lang || 'auto' }}
+  SHARD_TOTAL: ${{ github.event.inputs.shards || '4' }}
+  MODEL: ${{ github.event.inputs.model || 'small' }}
+  CPU_THREADS: ${{ github.event.inputs.cpu_threads || '2' }}
+  WORKERS: ${{ github.event.inputs.workers || '1' }}
+  AUDIO_DIR: whisper/input
+  HF_HUB_DISABLE_PROGRESS_BARS: '1'
+
+jobs:
+  transkrip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache model HuggingFace
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-whisper-${{ env.MODEL }}
+
+      - name: Install
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q faster-whisper
+
+      - name: Transkrip shard ${{ matrix.shard }}
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+          OUT_FILE: out/shard-${{ matrix.shard }}.jsonl
+        run: python whisper/transcribe_actions.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transkrip-shard-${{ matrix.shard }}
+          path: out/shard-${{ matrix.shard }}.jsonl
+          retention-days: 7
+
+  merge:
+    needs: transkrip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: transkrip-shard-*
+          path: parts
+          merge-multiple: true
+
+      - name: Gabung + urutkan
+        run: |
+          python - <<'PY'
+          import glob, json
+          rows = {}
+          for f in glob.glob("parts/*.jsonl"):
+              for line in open(f, encoding="utf-8"):
+                  if line.strip():
+                      r = json.loads(line)
+                      rows[r["item_num"]] = r["narasi"]
+          with open("narasi.txt", "w", encoding="utf-8") as out:
+              for num in sorted(rows):
+                  out.write(f"{num}. {rows[num]}\n")
+          print(f"total baris={len(rows)} -> narasi.txt")
+          PY
+          head -5 narasi.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: narasi-final
+          path: narasi.txt
+          retention-days: 30
+
+      - name: Laporkan ringkas (annotation)
+        if: always()
+        continue-on-error: true
+        run: |
+          tr '\n' '|' < narasi.txt | sed 's/::/:/g' | cut -c1-800 > /tmp/a
+          echo "::error::TRANSKRIP $(cat /tmp/a)"
+
+      - name: Ringkasan
+        run: |
+          echo "### Hasil transkrip" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          head -20 narasi.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
