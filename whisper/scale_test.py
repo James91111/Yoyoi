@@ -61,21 +61,30 @@ def physical_cores():
         return None, None
 
 
+def load_wav(path):
+    """Baca WAV sendiri -> float32, supaya tidak lewat PyAV (rawan beda versi)."""
+    with wave.open(path, "rb") as w:
+        frames = w.readframes(w.getnframes())
+    return np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+
+
 def run_config(clips, workers, cpu_threads):
     model = WhisperModel("small", device="cpu", compute_type="int8",
                          cpu_threads=cpu_threads)
 
-    def one(p):
-        segs, _ = model.transcribe(p, language="en", beam_size=1)
+    audio_arrays = [load_wav(p) for p in clips]
+
+    def one(a):
+        segs, _ = model.transcribe(a, language="en", beam_size=1)
         return sum(1 for _ in segs)
 
     t0 = time.perf_counter()
     if workers == 1:
-        for p in clips:
-            one(p)
+        for a in audio_arrays:
+            one(a)
     else:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            list(ex.map(one, clips))
+            list(ex.map(one, audio_arrays))
     wall = time.perf_counter() - t0
     audio = CLIP_SECONDS * len(clips)
     return wall, audio / wall  # detik dinding, rasio realtime (x)
