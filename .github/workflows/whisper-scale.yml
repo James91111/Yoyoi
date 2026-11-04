@@ -1,0 +1,47 @@
+name: Whisper scale test
+
+on:
+  push:
+    branches: [arena/f3c901c7-yoyoi]
+    paths:
+      - 'whisper/**'
+      - '.github/workflows/whisper-scale.yml'
+  workflow_dispatch:
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache model HuggingFace
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-whisper-small
+
+      - name: Install faster-whisper
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q faster-whisper numpy
+
+      - name: Jalankan uji skalabilitas
+        run: |
+          {
+            nproc
+            lscpu | grep -Ei 'model name|^cpu\(s\)|thread|core\(s\)'
+            python whisper/scale_test.py
+          } > /tmp/out.txt 2>&1 || true
+          cat /tmp/out.txt
+
+      - name: Laporkan hasil (annotation)
+        if: always()
+        continue-on-error: true
+        run: |
+          pack() { tr '\n' '|' < /tmp/out.txt | sed 's/::/:/g' | cut -c1-3500; }
+          echo "::error::WHISPER $(pack)"
